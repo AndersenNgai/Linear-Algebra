@@ -344,7 +344,7 @@ class Matrix:
                     coefficient_row[:] = [r - p for p, r in zip(pivot_coefficient_copy, coefficient_row_copy)]
                     constants_row[:] = [r - p for p, r in zip(pivot_constants_copy, constants_row_copy)]
         # The Matrix may need some row swaps
-        augmented.sort(key = lambda r: -r[0].index(0) if 0 in r[0] else -1)
+        augmented.sort(key = lambda r: leftmost_index(r[0]))
         if merge: # Now return
             return Matrix([coefficient + constants for (coefficient, constants) in augmented], output = self.output)
         return Matrix([r[0] for r in augmented], output = self.output), Matrix([r[1] for r in augmented], output = self.output)
@@ -391,7 +391,7 @@ class Matrix:
             return None
 
 def row_reduce(matrix):
-    "Prototype for row reduction on an augmented Matrix"
+    "[Outdated] Prototype for row reduction on an augmented Matrix"
     # This works, but only does the bare minimum
     lists = matrix.lists
     columns = len(lists[0])
@@ -421,10 +421,8 @@ def row_reduce(matrix):
                     continue
                 r[:] = [r - p for p, r in zip(pivot_copy, row_copy)]
 
-reduce = row_reducer = row_reduce
-
 def backsub(matrix):
-    "Find the values of the variables in a Matrix"
+    "[Oudated] Find the values of the variables in a Matrix"
     # Requires a Matrix to be in upper triangle form
     found = []
     for n, row in enumerate(reversed(matrix.lists), 2):
@@ -434,7 +432,7 @@ def backsub(matrix):
         found.insert(0, value)
     return found
 
-if __name__ == "__main__":
+if __name__ == "__main__": # Test cases
     basic = Matrix([[1, 1, -1], [1, 3, 1], [2, 3, 3]])
     basic_constants = Matrix.vector([1, 1, -2], False)
     no_solution = Matrix([[1, 1, -1], [1, 2, 2], [2, 3, 1]])
