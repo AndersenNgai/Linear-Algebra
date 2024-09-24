@@ -1,4 +1,4 @@
-# Version 1
+# Version 2
 
 class Matrix:
     "Important: When adding to / changing a Matrix and you input lists, remember to put them as [[1, 2], [3, 4]...]"
@@ -303,17 +303,92 @@ class Matrix:
         "Transpose a Matrix"
         return Matrix([c for c in self.iterate_columns()], output = self.output)
 
-    def row_reduce(self):
-        "Perform row reduction on an augmented Matrix"
-        copy = self.copy()
-        row_reduce(copy)
-        return copy
+    def row_reduce(self, constants, merge = False):
+        """Perform row reduction on a Matrix
+        Important: When doing M.row_reduce(), Matrix M is a coefficient Matrix, not an augmented matrix.
+        A vector (or Matrix) of constants must be supplied in the constants argument.
+        If argument merge == True, then return an augmented Matrix with the constants Matrix attached to the coefficient Matrix"""
+        if not isinstance(constants, Matrix):
+            raise TypeError("Expected a Matrix")
+        if self.rows() != constants.rows():
+            raise TypeError("The constants Matrix must have the same number of rows")
+        self_copy = self.copy()
+        constants_copy = constants.copy()
+        lists = self_copy.lists
+        columns = len(lists[0]) # Only for the coefficient Matrix
+        augmented = list(zip(lists, constants_copy.lists)) # Here is our augmented Matrix
+        def leftmost_index(row):
+            for index, value in enumerate(row):
+                if value != 0:
+                    return index
+            return columns # The row has only zeroes
+        for counter in range(columns - 1):
+            # Select a pivot row
+            pivot = None
+            for coefficient_row, constants_row in augmented:
+                leftmost = leftmost_index(coefficient_row)
+                if leftmost == counter:
+                    pivot = coefficient_row, constants_row # Includes both the coefficient row and constants row
+                    break
+            if pivot is None: # A pivot may be missing
+                continue
+            # Now that we have our pivot, add / subtract rows if they share the same leftmost column
+            for coefficient_row, constants_row in augmented:
+                if coefficient_row is not pivot[0] and leftmost_index(coefficient_row) == leftmost: # Reduce
+                    pivot_coefficient_copy = [c * coefficient_row[leftmost] for c in pivot[0]]
+                    pivot_constants_copy = [c * coefficient_row[leftmost] for c in pivot[1]]
+                    coefficient_row_copy = [c * pivot[0][leftmost] for c in coefficient_row]
+                    constants_row_copy = [c * pivot[0][leftmost] for c in constants_row]
+                    if pivot_coefficient_copy == coefficient_row_copy: # If no or infinite solutions, ignore and keep the zeroes
+                        continue
+                    coefficient_row[:] = [r - p for p, r in zip(pivot_coefficient_copy, coefficient_row_copy)]
+                    constants_row[:] = [r - p for p, r in zip(pivot_constants_copy, constants_row_copy)]
+        # The Matrix may need some row swaps
+        augmented.sort(key = lambda r: -r[0].index(0) if 0 in r[0] else -1)
+        if merge: # Now return
+            return Matrix([coefficient + constants for (coefficient, constants) in augmented], output = self.output)
+        return Matrix([r[0] for r in augmented], output = self.output), Matrix([r[1] for r in augmented], output = self.output)
 
     reduce = row_reduce
 
-    def backsub(self):
+    def backsub(self, constants, merge = False):
         "Perform backsubstitution on a Matrix in upper triangle form"
-        return backsub(self)
+        # Important: The Matrix MUST be in upper triangular form
+        if not isinstance(constants, Matrix):
+            raise TypeError("Expected a Matrix")
+        if self.rows() != constants.rows():
+            raise TypeError("The constants Matrix must have the same number of rows")
+        self_copy = self.copy()
+        constants_copy = constants.copy()
+        augmented = list(zip(self_copy.lists, constants_copy.lists))
+        columns = len(self_copy.lists[0])
+        for n, (coefficient_row, constants_row) in enumerate(reversed(augmented), 1):
+            target = coefficient_row[-n]
+            if target == 0 or any(n != 0 for n in coefficient_row[:-n]):
+                raise ValueError("Matrix not in upper triangular form")
+            nonzero_positions = [n for n, x in enumerate(coefficient_row) if x != 0]
+            if nonzero_positions:
+                for coeff_row, const_row in augmented:
+                    if coefficient_row is not coeff_row: # Do not subtract the same row from itself
+                        coeff_row_nonzeros = [n for n, x in enumerate(coeff_row) if x != 0]
+                        if coeff_row_nonzeros and all(z in nonzero_positions for z in coeff_row_nonzeros):
+                            multiply_factor = coefficient_row[coeff_row_nonzeros[0]] / coeff_row[coeff_row_nonzeros[0]]
+                            coefficient_row[:] = [a - b for a, b in zip(coefficient_row, (n * multiply_factor for n in coeff_row))]
+                            constants_row[:] = [a - b for a, b in zip(constants_row, (n * multiply_factor for n in const_row))]
+            constants_row[:] = [n / target for n in constants_row]
+            coefficient_row[-n] = 1
+        if merge:
+            self_copy.extend_columns(constants_copy)
+            return self_copy
+        return self_copy, constants_copy
+
+    def inverse(self):
+        "Return the inverse if a Matrix, if it's nonsingular"
+        left, right = self.row_reduce(self.identity(len(self.lists)))
+        try:
+            return left.backsub(right)[1]
+        except ValueError:
+            return None
 
 def row_reduce(matrix):
     "Prototype for row reduction on an augmented Matrix"
@@ -346,37 +421,6 @@ def row_reduce(matrix):
                     continue
                 r[:] = [r - p for p, r in zip(pivot_copy, row_copy)]
 
-def rtest(matrix):
-    "Prototype for row reduction on an augmented Matrix"
-    lists = matrix.lists
-    columns = len(lists[0])
-    def leftmost_index(row):
-        for index, value in enumerate(row):
-            if value != 0:
-                return index
-    for x in range(columns - 1):
-        # Check for any rows with all zeroes
-        lists[:] = [row for row in lists if not all(c == 0 for c in row)]
-        lists.sort(key = lambda r: leftmost_index(r)) # First, we need to organize the rows so they begin to look like the upper triangle
-        # Now select a pivot row
-        pivot = None
-        print("\n", matrix)
-        for n, r in enumerate(lists):
-            leftmost = leftmost_index(r)
-            if leftmost == columns - 1:
-                return
-            if leftmost != n:
-                break
-            pivot = r
-        # Now that we have our pivot, add / subtract rows if they share the same leftmost column
-        for r in lists:
-            if r is not pivot and leftmost_index(r) == leftmost: # Reduce
-                pivot_copy = [c * r[leftmost] for c in pivot]
-                row_copy = [c * pivot[leftmost] for c in r]
-                if row_copy[:-1] == pivot_copy[:-1] and row_copy[-1] != pivot_copy[-1]: # If no solution, do not subtract equations
-                    continue
-                r[:] = [r - p for p, r in zip(pivot_copy, row_copy)]
-
 reduce = row_reducer = row_reduce
 
 def backsub(matrix):
@@ -391,9 +435,15 @@ def backsub(matrix):
     return found
 
 if __name__ == "__main__":
-    basic = Matrix([[1, 1, -1, 1], [1,3, 1, 1], [2, 3, 3, -2]])
-    no_solution = Matrix([[1, 1, -1, 0], [1, 2, 2, 1], [2, 3, 1, -2]])
-    many_solutions = Matrix([[1, 1, -1, 0], [2, 1,1,1], [1, 0, 2, 1]])
-    many_solutions2 = Matrix([[1, 1, 1, 1, 0], [1, 2, 3, 4, 0], [2, 2, 3, 3, 0], [2, 1, 2, 1, 0]])
-    missing_pivot = Matrix([[1, 1, -1, 2], [1, 1, 1, 0], [1, 1, -2, 3]])
-    testthis = Matrix([[1, 2, 3, 4, 3], [0, 1, 0, 1, -4], [2, 3, 5, 7, 8]])
+    basic = Matrix([[1, 1, -1], [1, 3, 1], [2, 3, 3]])
+    basic_constants = Matrix.vector([1, 1, -2], False)
+    no_solution = Matrix([[1, 1, -1], [1, 2, 2], [2, 3, 1]])
+    no_solution_constants = Matrix.vector([0, 1, -2], False)
+    many_solutions = Matrix([[1, 1, -1], [2, 1,1], [1, 0, 2]])
+    many_solutions_constants = Matrix.vector([0, 1, 1], False)
+    many_solutions2 = Matrix([[1, 1, 1, 1], [1, 2, 3, 4], [2, 2, 3, 3], [2, 1, 2, 1]])
+    many_solutions2_constants = Matrix.vector([0, 0, 0, 0], False)
+    missing_pivot = Matrix([[1, 1, -1], [1, 1, 1], [1, 1, -2]])
+    missing_pivot_constants = Matrix.vector([2, 0, 3], False)
+    testthis = Matrix([[1, 2, 3, 4], [0, 1, 0, 1], [2, 3, 5, 7]])
+    testthis_constants = Matrix.vector([3, -4, 8], False)
