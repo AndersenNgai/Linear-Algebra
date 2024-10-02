@@ -50,10 +50,10 @@ class Matrix:
     
     width = rows
 
-    def copy(self):
+    def copy(self, output = None):
         "Make a copy of the matrix, always returned as a Matrix object"
         # Copy deep, copy each row and copy each column (but not the elements within each column)
-        return Matrix([[v for v in r] for r in self.lists], self.output)
+        return Matrix([[v for v in r] for r in self.lists], output = Matrix if output is None else output)
 
     def __getitem__(self, args):
         "You can either get a row or a specific value (row, column)"
@@ -75,7 +75,7 @@ class Matrix:
         """Obtain an entire region in a Matrix.
         Important: This works like slices, so the r_down and c_right values are ignored.
         So Matrix.set_region(r_up = 1, r_down = 3...) can only obtains values in the 2nd and 3rd rows"""
-        if r_down > self.rows() or c_right > self.rows():
+        if r_down > self.rows() or c_right > self.columns():
             raise IndexError("Index out of range")
         if r_down <= r_up or c_right <= c_left:
             raise IndexError("Invalid coordinates (less than 1 in width)")
@@ -102,8 +102,8 @@ class Matrix:
             if not isinstance(value, (list, Matrix)):
                 raise TypeError("Row must be a list or another Matrix")
             if isinstance(value, Matrix):
-                if value.columns() > 1:
-                    raise ValueError("Must be a horizontal Matrix with 1 column")
+                if value.rows() > 1:
+                    raise ValueError("Must be a horizontal Matrix with 1 row")
                 value = value[0]
             if len(value) != len(self.lists[0]):
                 raise IndexError("Rows must be the same length")
@@ -114,7 +114,7 @@ class Matrix:
         Important: This works like slices, so the r_down and c_right values are ignored.
         So Matrix.set_region(r_up = 1, r_down = 3...) can only obtains values in the 2nd and 3rd rows
         Also important: If lists are inputted, they must be nested like [[1, 2, 3], [4, 5, 6]]"""
-        if r_down > self.rows() or c_right > self.rows():
+        if r_down > self.rows() or c_right > self.columns():
             raise IndexError("Index out of range")
         if r_down <= r_up or c_right <= c_left:
             raise IndexError("Invalid coordinates (less than 1 in width)")
@@ -200,7 +200,7 @@ class Matrix:
         if isinstance(m, Matrix):
             m = m.lists
         if hasattr(m, "__iter__") and hasattr(m, "__len__") and self.rows() == len(m) and self.columns() == len(m[0]) \
-           and all([v1 == v2 for (v1, v2) in zip(r1, r2)] for (r1, r2) in zip(self.lists, m)):
+           and all(all(v1 == v2 for (v1, v2) in zip(r1, r2)) for (r1, r2) in zip(self.lists, m)):
             return True
         return False
 
@@ -303,11 +303,37 @@ class Matrix:
         "Transpose a Matrix"
         return Matrix([c for c in self.iterate_columns()], output = self.output)
 
-    def row_reduce(self, constants, merge = False):
+    def row_reduce_self(self):
+        """Perform row reduction on a Matrix by itself
+        Important: When doing M.row_reduce(), Matrix M is not an augmented matrix."""
+        self_copy = self.copy(output = Matrix)
+        lists = self_copy.lists
+        columns = len(lists[0])
+        def leftmost_index(row):
+            for index, value in enumerate(row):
+                if value != 0:
+                    return index
+            return columns # The row has only zeroes
+        for counter in range(columns - 1):
+            rows = iter(row for row in lists if leftmost_index(row) == counter)
+            try:
+                pivot = next(rows) # Now that we have rows with the same leftmost, add / subtract rows if they share the same leftmost column
+                pivot_first = pivot[counter]
+            except StopIteration: # Missing pivot or zeroes row
+                continue
+            for row in rows: # Reduce any other rows with the same leftmost nonzero
+                scale_factor = row[counter] / pivot_first
+                row[:] = [r - p * scale_factor for p, r in zip(pivot, row)]
+        # The Matrix may need some row swaps
+        lists.sort(key = lambda r: leftmost_index(r))
+        return self_copy
+
+    def row_echelon_form(self, constants = None, merge = False):
         """Perform row reduction on a Matrix
-        Important: When doing M.row_reduce(), Matrix M is a coefficient Matrix, not an augmented matrix.
-        A vector (or Matrix) of constants must be supplied in the constants argument.
-        If argument merge == True, then return an augmented Matrix with the constants Matrix attached to the coefficient Matrix"""
+        Important: When doing M.row_reduce(), Matrix M is not an augmented matrix.
+        If argument merge == True, then return an augmented Matrix with any constants Matrix attached to the coefficient Matrix"""
+        if constants is None:
+            return self.row_reduce_self()
         if not isinstance(constants, Matrix):
             raise TypeError("Expected a Matrix")
         if self.rows() != constants.rows():
@@ -321,35 +347,25 @@ class Matrix:
             for index, value in enumerate(row):
                 if value != 0:
                     return index
-            return columns # The row has only zeroes
+            return columns # The coefficient Matrix row has only zeroes
         for counter in range(columns - 1):
-            # Select a pivot row
-            pivot = None
-            for coefficient_row, constants_row in augmented:
-                leftmost = leftmost_index(coefficient_row)
-                if leftmost == counter:
-                    pivot = coefficient_row, constants_row # Includes both the coefficient row and constants row
-                    break
-            if pivot is None: # A pivot may be missing
+            rows = iter(row for row in augmented if leftmost_index(row[0]) == counter) # Includes both the coefficient and constants Matrices
+            try:
+                pivot = next(rows) # Now that we have rows with the same leftmost, add / subtract rows if they share the same leftmost column
+                pivot_first = pivot[0][counter]
+            except StopIteration: # Missing pivot or zeroes row
                 continue
-            # Now that we have our pivot, add / subtract rows if they share the same leftmost column
-            for coefficient_row, constants_row in augmented:
-                if coefficient_row is not pivot[0] and leftmost_index(coefficient_row) == leftmost: # Reduce
-                    pivot_coefficient_copy = [c * coefficient_row[leftmost] for c in pivot[0]]
-                    pivot_constants_copy = [c * coefficient_row[leftmost] for c in pivot[1]]
-                    coefficient_row_copy = [c * pivot[0][leftmost] for c in coefficient_row]
-                    constants_row_copy = [c * pivot[0][leftmost] for c in constants_row]
-                    if pivot_coefficient_copy == coefficient_row_copy: # If no or infinite solutions, ignore and keep the zeroes
-                        continue
-                    coefficient_row[:] = [r - p for p, r in zip(pivot_coefficient_copy, coefficient_row_copy)]
-                    constants_row[:] = [r - p for p, r in zip(pivot_constants_copy, constants_row_copy)]
+            for coefficients, constants in rows:
+                scale_factor = coefficients[counter] / pivot_first
+                coefficients[:] = [r - p * scale_factor for p, r in zip(pivot[0], coefficients)]
+                constants[:] = [r - p * scale_factor for p, r in zip(pivot[1], constants)]
         # The Matrix may need some row swaps
         augmented.sort(key = lambda r: leftmost_index(r[0]))
         if merge: # Now return
             return Matrix([coefficient + constants for (coefficient, constants) in augmented], output = self.output)
         return Matrix([r[0] for r in augmented], output = self.output), Matrix([r[1] for r in augmented], output = self.output)
 
-    reduce = row_reduce
+    reduce = row_reduce = ref = row_echelon_form
 
     def backsub(self, constants, merge = False):
         "Perform backsubstitution on a Matrix in upper triangle form"
@@ -358,8 +374,8 @@ class Matrix:
             raise TypeError("Expected a Matrix")
         if self.rows() != constants.rows():
             raise TypeError("The constants Matrix must have the same number of rows")
-        self_copy = self.copy()
-        constants_copy = constants.copy()
+        self_copy = self.copy(output = Matrix)
+        constants_copy = constants.copy(output = Matrix)
         augmented = list(zip(self_copy.lists, constants_copy.lists))
         columns = len(self_copy.lists[0])
         for n, (coefficient_row, constants_row) in enumerate(reversed(augmented), 1):
@@ -382,59 +398,102 @@ class Matrix:
             return self_copy
         return self_copy, constants_copy
 
+    def rref(self, constants, merge = False):
+        """Turn a Matrix into reduced row echelon (rref) form
+        Important: When doing M.row_reduce(), Matrix M is not an augmented matrix.
+        If argument merge == True, then return an augmented Matrix with any constants Matrix attached to the coefficient Matrix"""
+        if not isinstance(constants, Matrix):
+            raise TypeError("Expected a Matrix")
+        if self.rows() != constants.rows():
+            raise TypeError("The constants Matrix must have the same number of rows")
+        a, b = self.row_reduce(constants)
+        a, b = a.backsub(b)
+        if merge:
+            a.extend_columns(b)
+            return a
+        return a, b
+
     def inverse(self):
         "Return the inverse if a Matrix, if it's nonsingular"
-        left, right = self.row_reduce(self.identity(len(self.lists)))
+        left, right = self.row_reduce(self.identity(len(self.lists)), merge = False)
         try:
             return left.backsub(right)[1]
         except ValueError:
             return None
 
-def row_reduce(matrix):
-    "[Outdated] Prototype for row reduction on an augmented Matrix"
-    # This works, but only does the bare minimum
-    lists = matrix.lists
-    columns = len(lists[0])
-    def leftmost_index(row):
-        for index, value in enumerate(row):
-            if value != 0:
-                return index
-    for x in range(columns - 1):
-        # Check for any rows with all zeroes
-        lists[:] = [row for row in lists if not all(c == 0 for c in row)]
-        lists.sort(key = lambda r: leftmost_index(r)) # First, we need to organize the rows so they begin to look like the upper triangle
-        # Now select a pivot row
-        pivot = None
-        for n, r in enumerate(lists):
-            leftmost = leftmost_index(r)
-            if leftmost == columns - 1:
-                return
-            if leftmost != n:
-                break
-            pivot = r
-        # Now that we have our pivot, add / subtract rows if they share the same leftmost column
-        for r in lists:
-            if r is not pivot and leftmost_index(r) == leftmost: # Reduce
-                pivot_copy = [c * r[leftmost] for c in pivot]
-                row_copy = [c * pivot[leftmost] for c in r]
-                if row_copy[:-1] == pivot_copy[:-1] and row_copy[-1] != pivot_copy[-1]: # If no solution, do not subtract equations
-                    continue
-                r[:] = [r - p for p, r in zip(pivot_copy, row_copy)]
+    def elimination_matrix(self): # May need to fix because not all matrices can have upper triangular form
+        "Return the elimination Matrix which converts A into upper triangular form"
+        # MA = U -> M = U * A-1
+        return self.row_reduce(self.identity(len(self.lists)), merge = False)[1]
 
-def backsub(matrix):
-    "[Oudated] Find the values of the variables in a Matrix"
-    # Requires a Matrix to be in upper triangle form
-    found = []
-    for n, row in enumerate(reversed(matrix.lists), 2):
-        solve, *others, value = row[-n:]
-        value -= sum(a * b for a, b in zip(others, found))
-        value /= solve
-        found.insert(0, value)
-    return found
+    def elementary_breakdown(self):
+        "Yield the steps of row reducing a Matrix along with the elementary Matrices"
+        # The last tuple yielded is the reduced Matrix along with the elementary Matrix dealing with row swaps
+        # If the last elementary Matrix is an identity Matrix, no row swaps occurred
+        self_copy = self.copy(output = Matrix)
+        lists = self_copy.lists
+        columns = len(lists[0])
+        matrix_rows = len(lists)
+        def leftmost_index(row):
+            for index, value in enumerate(row):
+                if value != 0:
+                    return index
+                if index == columns:
+                    return columns # The row has only zeroes
+        for counter in range(columns - 1):
+            rows = iter((row, n) for n, row in enumerate(lists) if leftmost_index(row) == counter)
+            try:
+                pivot = next(rows)[0] # Now that we have rows with the same leftmost, add / subtract rows if they share the same leftmost column
+                pivot_first = pivot[counter]
+            except StopIteration: # Missing pivot or zeroes row
+                continue
+            for row, n in rows: # Reduce any other rows with the same leftmost nonzero
+                scale_factor = row[counter] / pivot_first
+                row[:] = [r - p * scale_factor for p, r in zip(pivot, row)]
+                elementary = Matrix.identity(matrix_rows)
+                elementary[n, counter] = -scale_factor
+                yield self_copy, elementary
+        # The Matrix may need some row swaps
+        identity = Matrix.identity(matrix_rows)
+        self_copy.extend_columns(identity)
+        lists.sort(key = lambda r: leftmost_index(r))
+        row_swaps = self_copy.get_region(0, len(lists), columns, columns + matrix_rows)
+        for r in lists:
+            r = r[:columns]
+        yield self_copy.get_region(0, len(lists), 0, columns), row_swaps
+
+    def lu_decomposition(self):
+        "Return L, U and P (in that order) for PA = LU in the LU decomposition of a Matrix"
+        upper_triangle, row_swaps = tuple(self.elementary_breakdown())[-1]
+        self_copy = row_swaps * self.copy(output = Matrix)
+        lists = self_copy.lists
+        columns = len(lists[0])
+        lower_triangle = Matrix.identity(len(lists))
+        def leftmost_index(row):
+            for index, value in enumerate(row):
+                if value != 0:
+                    return index
+            return columns # The row has only zeroes
+        for counter in range(columns - 1):
+            rows = iter((row, n) for n, row in enumerate(lists) if leftmost_index(row) == counter)
+            try:
+                pivot = next(rows)[0] # Now that we have rows with the same leftmost, add / subtract rows if they share the same leftmost column
+                pivot_first = pivot[counter]
+            except StopIteration: # Missing pivot or zeroes row
+                continue
+            for row, n in rows: # Reduce any other rows with the same leftmost nonzero
+                scale_factor = row[counter] / pivot_first
+                row[:] = [r - p * scale_factor for p, r in zip(pivot, row)]
+                lower_triangle[n, counter] = scale_factor
+        return lower_triangle, upper_triangle, row_swaps
+
+    lu = lu_decomposition
 
 if __name__ == "__main__": # Test cases
     basic = Matrix([[1, 1, -1], [1, 3, 1], [2, 3, 3]])
     basic_constants = Matrix.vector([1, 1, -2], False)
+    row_swaps = Matrix([[1, 1, -1], [1, 1, 1], [1, 2, 2]])
+    row_swaps_constants = Matrix.vector([1, 2, 1], False)
     no_solution = Matrix([[1, 1, -1], [1, 2, 2], [2, 3, 1]])
     no_solution_constants = Matrix.vector([0, 1, -2], False)
     many_solutions = Matrix([[1, 1, -1], [2, 1,1], [1, 0, 2]])
